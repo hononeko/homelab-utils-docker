@@ -1,0 +1,41 @@
+name: Validate Images (CI)
+
+on:
+  pull_request:
+    paths:
+      - 'images/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'images/**'
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  validate:
+    name: Validate Dockerfiles
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        image: [k8s-backup-tools, k8s-config-tools]
+        
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (Validate Only)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./images/${{ matrix.image }}
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/hononeko/${{ matrix.image }}:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
