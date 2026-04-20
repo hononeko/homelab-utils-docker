@@ -61,7 +61,7 @@ jobs:
 
       - name: Build and push Docker image
         id: push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./images/${{ github.event.inputs.image_name }}
           push: true
