@@ -3,17 +3,21 @@
   "extends": [
     "config:recommended",
     "mergeConfidence:all-badges",
-    ":semanticCommitTypeAll(chore)"
+    ":semanticCommitTypeAll(chore)",
+    "helpers:pinGitHubActionDigests"
   ],
   "packageRules": [
     {
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "pin",
-        "digest"
-      ],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true
+    },
+
+    {
+      "matchManagers": ["github-actions"],
+      "pinDigests": true,
+      "groupName": "github-actions",
+      "schedule": ["every weekend"],
+      "description": "Group all GitHub Actions updates and schedule them weekly"
     }
   ],
   "docker": {
