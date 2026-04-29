@@ -16,7 +16,8 @@
 
     {
       "matchUpdateTypes": [
-        "pin"
+        "pin",
+        "digest"
       ],
       "automerge": true
     },
