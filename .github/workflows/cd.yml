@@ -1,98 +1,114 @@
-name: Docker Build and Push (CD)
+name: Release
 
+# Releases one image: its next version from the Conventional Commits under images/<image> since its last
+# <image>-X.Y.Z tag, both architectures built and joined into one multi-arch image tagged with that version and
+# `latest` (with build provenance), and a GitHub Release with that image's notes.
 on:
   workflow_dispatch:
     inputs:
       image_name:
-        description: 'The image to build and deploy'
+        description: The image to release
         required: true
         type: choice
         options:
           - k8s-backup-tools
           - k8s-config-tools
 
+# Never cancel a release mid-flight; a second dispatch for the same image waits.
+concurrency:
+  group: release-${{ inputs.image_name }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  version:
+    name: Version
+    runs-on: ubuntu-26.04
     permissions:
-      contents: write # Needed for creating tags and releases
-      packages: write
-      attestations: write
-      id-token: write
-
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_tag: ${{ steps.version.outputs.version-tag }}
+      version_type: ${{ steps.version.outputs.version-type }}
+      previous_tag: ${{ steps.version.outputs.previous-tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0 # Needed for semantic-version to calculate version
+          persist-credentials: false
+          fetch-depth: 0
 
-      - name: Calculate Semantic Version
+      - name: Version
         id: version
-        uses: PaulHatch/semantic-version@4d6da96a9bc3116da3613309a11ff75fba58eb8d # v6.0.4
+        uses: hononeko/actions/version@v1
         with:
-          change_path: "images/${{ github.event.inputs.image_name }}"
-          bump_each_commit: false
-          tag_prefix: "${{ github.event.inputs.image_name }}-"
-          major_pattern: "/(?:feat|fix|revert|chore)!:|BREAKING CHANGE:/"
-          minor_pattern: "/feat(\\(.+\\))?:/"
-          version_format: "${major}.${minor}.${patch}"
+          tag-prefix: ${{ inputs.image_name }}-
+          change-path: images/${{ inputs.image_name }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+  image:
+    name: Image
+    needs: version
+    if: needs.version.outputs.version_type != 'none'
+    uses: ./.github/workflows/image.yml
+    with:
+      image: ${{ inputs.image_name }}
+      push: true
+    permissions:
+      contents: read
+      packages: write
 
+  publish:
+    name: Publish
+    needs: [version, image]
+    runs-on: ubuntu-26.04
+    permissions:
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
       - name: Log in to GitHub Container Registry (GHCR)
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+      - name: Publish the multi-arch image
+        uses: hononeko/actions/publish-image@v1
         with:
-          images: ${{ env.REGISTRY }}/hononeko/${{ github.event.inputs.image_name }}
+          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ inputs.image_name }}
           tags: |
-            type=raw,value=latest
-            type=raw,value=${{ steps.version.outputs.version }}
+            ${{ needs.version.outputs.version }}
+            latest
+          expected-digests: "2"
+          title: ${{ inputs.image_name }} ${{ needs.version.outputs.version }} published
 
-      - name: Build and push Docker image
-        id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+  release:
+    name: GitHub Release
+    needs: [version, publish]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          context: ./images/${{ github.event.inputs.image_name }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: mode=max
-          sbom: true
+          persist-credentials: false
+          fetch-depth: 0
 
-      - name: Generate Changelog
-        if: steps.version.outputs.version_tag
-        run: |
-          PREV_TAG=$(git describe --match "${{ github.event.inputs.image_name }}-*" --tags --abbrev=0 2>/dev/null || true)
-          if [ -z "$PREV_TAG" ]; then
-            git log --pretty=format:"* %s (%h)" -- images/${{ github.event.inputs.image_name }} > changelog.txt
-          else
-            git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h)" -- images/${{ github.event.inputs.image_name }} > changelog.txt
-          fi
-
-      - name: Push Git Tag
-        if: steps.version.outputs.version_tag
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git tag ${{ steps.version.outputs.version_tag }}
-          git push origin ${{ steps.version.outputs.version_tag }}
-
-      - name: Create GitHub Release
-        if: steps.version.outputs.version_tag
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+      - name: Release notes
+        uses: hononeko/actions/release-notes@v1
         with:
-          tag_name: ${{ steps.version.outputs.version_tag }}
-          body_path: changelog.txt
+          previous-tag: ${{ needs.version.outputs.previous_tag }}
+          tag: ${{ needs.version.outputs.version_tag }}
+          change-path: images/${{ inputs.image_name }}
+          summary: Release notes for ${{ needs.version.outputs.version_tag }}
+
+      # Creates the tag on this commit too.
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_TAG: ${{ needs.version.outputs.version_tag }}
+        run: gh release create "$VERSION_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$VERSION_TAG" --notes-file release-notes.md

@@ -2,40 +2,42 @@ name: Validate Images (CI)
 
 on:
   pull_request:
-    paths:
-      - 'images/**'
   push:
     branches:
       - main
-    paths:
-      - 'images/**'
 
-env:
-  REGISTRY: ghcr.io
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  validate:
-    name: Validate Dockerfiles
-    runs-on: ubuntu-latest
+  lint:
+    name: Lint
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
-    strategy:
-      matrix:
-        image: [k8s-backup-tools, k8s-config-tools]
-        
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-
-      - name: Build image (Validate Only)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
-          context: ./images/${{ matrix.image }}
-          push: false
-          load: true
-          tags: ${{ env.REGISTRY }}/hononeko/${{ matrix.image }}:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          persist-credentials: false
+
+      - name: Lint workflows and actions
+        uses: hononeko/actions/lint-actions@v1
+
+      - name: Lint Dockerfiles
+        uses: hononeko/actions/lint-docker@v1
+
+  # Every image on both architectures, built and checked; nothing is pushed.
+  image:
+    name: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [k8s-backup-tools, k8s-config-tools]
+    uses: ./.github/workflows/image.yml
+    with:
+      image: ${{ matrix.image }}
+    permissions:
+      contents: read
+      packages: write

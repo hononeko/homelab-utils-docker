@@ -1,0 +1,97 @@
+name: Image
+
+# Builds one image natively on an amd64 and an arm64 runner (no QEMU), checks each one starts, and, with `push`,
+# pushes each to GHCR by digest. cd.yml combines the digests into one multi-arch image.
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: The image to build, a directory under images/
+        type: string
+        required: true
+      push:
+        description: Push each architecture's image to GHCR by digest and upload the digests as artifacts
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: Image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    # What both callers grant: read the code, push images when `push` is set.
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: ./images/${{ inputs.image }}
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          tags: check:${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}
+
+      # The images are tools, not servers: check the entrypoint starts and runs a command.
+      - name: Check the image runs
+        env:
+          IMAGE: check:${{ matrix.arch }}
+        run: docker run --rm "$IMAGE" sh -c 'echo ok'
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        if: inputs.push
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image by digest
+        id: push
+        if: inputs.push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: ./images/${{ inputs.image }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Export digest
+        if: inputs.push
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          mkdir -p digests
+          touch "digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        if: inputs.push
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: digests-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+          retention-days: 1

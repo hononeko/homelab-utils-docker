@@ -4,7 +4,8 @@
     "config:recommended",
     "mergeConfidence:all-badges",
     ":semanticCommitTypeAll(chore)",
-    "helpers:pinGitHubActionDigests"
+    "helpers:pinGitHubActionDigests",
+    "github>hononeko/actions//renovate/downstream"
   ],
   "packageRules": [
     {
@@ -18,12 +19,13 @@
       "matchUpdateTypes": [
         "pin",
         "digest",
-        "pinDigests"
+        "pinDigest"
       ],
       "automerge": true
     },
     {
       "matchManagers": ["github-actions"],
+      "matchPackageNames": ["!hononeko/actions", "!hononeko/actions/**"],
       "pinDigests": true,
       "groupName": "github-actions",
       "schedule": ["every weekend"],
