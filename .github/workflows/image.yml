@@ -48,8 +48,7 @@ jobs:
           context: ./images/${{ inputs.image }}
           platforms: linux/${{ matrix.arch }}
           tags: check:${{ matrix.arch }}
-          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}
+          cache-scope: ${{ inputs.image }}-${{ matrix.arch }}
 
       # The images are tools, not servers: check the entrypoint starts and runs a command.
       - name: Check the image runs
@@ -73,5 +72,6 @@ jobs:
           context: ./images/${{ inputs.image }}
           platforms: linux/${{ matrix.arch }}
           push: "true"
-          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}
+          cache-scope: ${{ inputs.image }}-${{ matrix.arch }}
+          cache-write: "false"
           digest-artifact: digests-${{ matrix.arch }}
